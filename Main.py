@@ -1,18 +1,5 @@
 import sys
-sys.path.append("SadTalker")
-from SadTalker.Inference import SadTalker_Model
-
-sys.path.append("VITS")
-sys.path.append("VITS/GPT_SoVITS")
-from VITS.Inference import GPT_SoVITS_Model
-from VITS.train import GPT_SoVITS_Tarin
-
-sys.path.append("Easy_Wav2Lip")
-from Easy_Wav2Lip.Motion_Inference import Wav2Lip_Model
-
-from util.PPT2Video import Ppt_2_Video
 from util.Function import Clear_File, Change_image_Size, Sort_Key, Write_Json
-from util.WavJoin import Add_Wav_Processor
 
 import json
 import os
@@ -47,6 +34,7 @@ def VITS_Sadtalker_Inference(result_vits_user_path, result_sadtalker_user_path, 
     
 # 推理用户音频跟Sadtalker
 def User_Wav_Sadtalker_Inference(result_sadtalker_user_path, save_user_path):
+    from SadTalker.Inference import SadTalker_Model
     ppt_audio_dir = os.path.join(save_user_path, "PPT_Audio")
     audio_json_save_path = os.path.join(save_user_path, "Audio_save_path.json")
     video_json_save_path =os.path.join(save_user_path,"Video_save_path.json")
@@ -102,6 +90,7 @@ def VITS_Wav2Lip_Inference(result_vits_user_path, result_wav2lip_user_path, save
     
 # 推理用户音频跟Wav2Lip
 def User_Wav_Wav2Lip_Inference(user_result_wav2lip_path, save_user_path):
+    from Easy_Wav2Lip.Motion_Inference import Wav2Lip_Model
     ppt_audio_dir = os.path.join(save_user_path, "PPT_Audio")
     audio_json_save_path = os.path.join(save_user_path, "Audio_save_path.json")
     json_file_path =os.path.join(save_user_path,"Video_save_path.json")
@@ -474,6 +463,7 @@ def Save_Insert_Audio(user_data_save_path, name, audio_data):
 #训练VITS模型
 class VITS_Train():
     def __init__(self, user):
+        from VITS.train import GPT_SoVITS_Tarin
         self.GST = GPT_SoVITS_Tarin(user)
         
     #对音频标注保存
@@ -581,6 +571,7 @@ def Select_VITS_Model(user_data_save_path, index):
      
 #把sadtalker的每一个视频去背景
 def Remove_Video_Background(user_data_save_path):
+    from util.PPT2Video import Ppt_2_Video
     output_frames = os.path.join(user_data_save_path, "output_frames")
     input_frames = os.path.join(user_data_save_path, "input_frames")
     mov_video = os.path.join(user_data_save_path, "Mov_Video")
@@ -602,6 +593,7 @@ def Remove_Video_Background(user_data_save_path):
     
 #Mov视频跟PPT合成最终视频(全插入)
 def Video_Joint(user_data_save_path):
+    from util.PPT2Video import Ppt_2_Video
     
     output_frames = os.path.join(user_data_save_path, "output_frames")
     input_frames = os.path.join(user_data_save_path, "input_frames")
@@ -643,6 +635,7 @@ def Video_Joint(user_data_save_path):
     
 #Mov视频跟PPT合成最终视频（可选择插入）
 def Video_Joint_Select(user_data_save_path):
+    from util.PPT2Video import Ppt_2_Video
     output_frames = os.path.join(user_data_save_path, "output_frames")
     input_frames = os.path.join(user_data_save_path, "input_frames")
     Mov_Video = os.path.join(user_data_save_path, "Mov_Video")
@@ -693,6 +686,7 @@ def Video_Joint_Select(user_data_save_path):
 
 #最终的PPT视频拼接音频
 def Last_Video_Join_Audio(user_data_save_path, input_video):
+    from util.WavJoin import Add_Wav_Processor
     AWP = Add_Wav_Processor()
     
     audio_save_path = os.path.join(user_data_save_path, "Audio_save_path.json")
@@ -721,6 +715,7 @@ def Last_Video_Join_Audio(user_data_save_path, input_video):
   
 #PPT视频拼接音频
 def Video_Join_Audio(user_data_save_path):
+    from util.WavJoin import Add_Wav_Processor
     AWP = Add_Wav_Processor()
     input_video = os.path.join(user_data_save_path, "PPT_Video.mp4")
     audio_save_path = os.path.join(user_data_save_path, "Audio_save_path.json")
@@ -754,6 +749,8 @@ def Video_Join_Audio(user_data_save_path):
 #VITS跟Sadtalker结合
 class VITS_Sadtalker_Join():
     def __init__(self,vits,sadtalker,save):
+        from SadTalker.Inference import SadTalker_Model
+        from VITS.Inference import GPT_SoVITS_Model
         
         #声明模型
         self.VITS = None
@@ -875,6 +872,8 @@ class VITS_Sadtalker_Join():
 #VITS跟Wav2Lip结合
 class VITS_Wav2Lip_Join():
     def __init__(self,vits,wav2lip,save):
+        from Easy_Wav2Lip.Motion_Inference import Wav2Lip_Model
+        from VITS.Inference import GPT_SoVITS_Model
         
         #声明模型
         self.VITS = None
