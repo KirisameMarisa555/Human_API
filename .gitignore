@@ -1,0 +1,23 @@
+# Local secrets and user data
+DataBase/Login.json
+Data/Test/
+*.env
+
+# Python caches and local runtime output
+__pycache__/
+*.py[cod]
+.pytest_cache/
+Result/**/*
+!Result/**/README*
+
+# Model checkpoints and generated weights (download separately on the server)
+**/checkpoints/*
+**/weights/*
+VITS/GPT_weights/*
+VITS/SoVITS_weights/*
+!VITS/GPT_weights/README.md
+
+# OS/editor files
+.DS_Store
+.idea/
+.vscode/
