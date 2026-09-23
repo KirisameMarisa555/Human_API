@@ -10,7 +10,10 @@ expression_scale: 1.0
 input_yaw: null
 input_pitch: null
 input_roll: null
-enhancer: 'gfpgan'
+# GFPGAN face enhancement is extremely slow on this deployment and can run on
+# CPU even when SadTalker itself is using CUDA. Keep it disabled for course
+# rendering; the base renderer already produces a usable avatar video.
+enhancer: null
 background_enhancer: null
 cpu: false
 face3dvis: false
