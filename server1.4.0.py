@@ -285,6 +285,49 @@ def Course_Scenes():
     if not os.path.exists(scenes_path): return jsonify(result='Failed', message='请先解析课件'), 404
     return jsonify(result='Success', scenes=json.load(open(scenes_path, encoding='utf-8')))
 
+@app.route('/Course_Info', methods=['GET'])
+def Course_Info():
+    user, course_id = _course_params(request.args)
+    try:
+        path = _course_dir(user, course_id)
+    except ValueError as exc:
+        return jsonify(result='Failed', message=str(exc)), 400
+    meta_path = os.path.join(path, 'Course_Meta.json')
+    scenes_path = os.path.join(path, 'Course_Scenes.json')
+    if not os.path.exists(meta_path):
+        return jsonify(result='Failed', message='课程不存在'), 404
+    with open(meta_path, encoding='utf-8') as meta_file:
+        meta = json.load(meta_file)
+    scenes = []
+    if os.path.exists(scenes_path):
+        with open(scenes_path, encoding='utf-8') as scenes_file:
+            scenes = json.load(scenes_file)
+    return jsonify(result='Success', course_id=meta.get('Course_Id', course_id), name=meta.get('Name', ''), scenes=scenes, state=_read_course_state(path))
+
+@app.route('/Course_Page', methods=['GET'])
+def Course_Page():
+    user, course_id = _course_params(request.args)
+    try:
+        path = _course_dir(user, course_id)
+    except ValueError as exc:
+        return jsonify(result='Failed', message=str(exc)), 400
+    try:
+        index = int(request.args.get('index', '1'))
+    except ValueError:
+        return jsonify(result='Failed', message='页码无效'), 400
+    scenes_path = os.path.join(path, 'Course_Scenes.json')
+    if not os.path.exists(scenes_path):
+        return jsonify(result='Failed', message='请先解析课件'), 404
+    with open(scenes_path, encoding='utf-8') as scenes_file:
+        scenes = json.load(scenes_file)
+    if index < 1 or index > len(scenes):
+        return jsonify(result='Failed', message='页码超出范围'), 404
+    image_name = os.path.basename(scenes[index - 1].get('Image') or '')
+    target = os.path.join(path, 'Course_Pages', image_name)
+    if not image_name or not os.path.isfile(target):
+        return jsonify(result='Failed', message='页面图片不存在'), 404
+    return send_file(target, mimetype='image/png', max_age=3600)
+
 @app.route('/Course_Render', methods=['POST'])
 def Course_Render():
     data = request.get_json() or {}; user, course_id = _course_params(data)
