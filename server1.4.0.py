@@ -12,6 +12,7 @@ import os
 import re
 import shutil
 import subprocess
+import time
 import uuid
 import zipfile
 import xml.etree.ElementTree as ET
@@ -76,8 +77,8 @@ def _write_course_state(path, **updates):
         os.replace(temp_path, _course_state_path(path))
     return state
 
-def _course_render_pipeline(path, scenes):
-    """Render the first scene with the configured GPT-SoVITS and SadTalker models."""
+def _course_render_pipeline(path, scenes, progress_callback=None):
+    """Render every course scene with one loaded TTS and SadTalker model."""
     import sys
     sys.path.insert(0, os.path.join(os.getcwd(), 'SadTalker'))
     sys.path.insert(0, os.path.join(os.getcwd(), 'VITS'))
@@ -85,66 +86,90 @@ def _course_render_pipeline(path, scenes):
     from VITS.Inference import GPT_SoVITS_Model
     from SadTalker.Inference import SadTalker_Model
 
-    scene = scenes[0]
-    script = (scene.get('Script') or scene.get('Text') or '').strip()
-    if not script:
-        raise RuntimeError('第一页没有讲稿或页面文本')
-    image_name = scene.get('Image')
-    image_path = os.path.join(path, 'Course_Pages', image_name or '')
+    path = os.path.abspath(path)
     avatar_path = os.environ.get('COURSE_AVATAR_IMAGE', '/root/autodl-tmp/inputs/Image.png')
     ref_wav_path = os.environ.get('COURSE_REF_WAV', os.path.join(os.getcwd(), 'VITS', 'Ref_Wav', 'Man.WAV'))
-    if not os.path.exists(image_path):
-        raise RuntimeError('第一页图片不存在')
     if not os.path.exists(avatar_path):
         raise RuntimeError('固定数字人图片不存在，请设置 COURSE_AVATAR_IMAGE')
     if not os.path.exists(ref_wav_path):
         raise RuntimeError('固定参考音频不存在，请设置 COURSE_REF_WAV')
 
     render_dir = os.path.join(path, 'Course_Render')
+    if os.path.exists(render_dir):
+        shutil.rmtree(render_dir)
     os.makedirs(render_dir, exist_ok=True)
     vits_config = os.path.join(render_dir, 'GPT-SoVITS_config.yaml')
     sad_config = os.path.join(render_dir, 'SadTalker_config.yaml')
     shutil.copy2(os.path.join(os.getcwd(), 'VITS', 'GPT-SoVITS_config.yaml'), vits_config)
     shutil.copy2(os.path.join(os.getcwd(), 'SadTalker', 'SadTalker_config.yaml'), sad_config)
-    audio_path = os.path.join(render_dir, 'page-1.wav')
-    avatar_video = os.path.join(render_dir, 'page-1-avatar')
     final_video = os.path.join(path, 'last_video.mp4')
 
     tts = GPT_SoVITS_Model()
     tts.Initialize_Parames(vits_config)
     tts.Initialize_Models()
-    tts.Perform_Inference(
-        ref_wav_path=ref_wav_path,
-        prompt_text='我制作了一站式的整合包，从训练到推理都可以零门槛上手使用',
-        prompt_languageself=tts.i18n('中文'),
-        target_text=script,
-        target_text_language=tts.i18n('中文'),
-        cut=tts.i18n('凑50字一切'),
-        output_path=audio_path,
-    )
-    if not os.path.exists(audio_path):
-        raise RuntimeError('GPT-SoVITS 未生成音频')
-
     sad = SadTalker_Model()
     sad.Initialize_Parames(render_dir, sad_config)
     sad.Initialize_Models()
-    sad.Perform_Inference(avatar_path, audio_path, avatar_video)
-    avatar_mp4 = avatar_video + '.mp4'
-    if not os.path.exists(avatar_mp4):
-        raise RuntimeError('SadTalker 未生成视频')
+    page_videos = []
+    page_durations = []
+    for index, scene in enumerate(scenes, 1):
+        script = (scene.get('Script') or scene.get('Text') or '').strip()
+        if not script:
+            raise RuntimeError(f'第 {index} 页没有讲稿或页面文本')
+        image_path = os.path.join(path, 'Course_Pages', scene.get('Image') or '')
+        if not os.path.exists(image_path):
+            raise RuntimeError(f'第 {index} 页图片不存在')
+        audio_path = os.path.join(render_dir, f'page-{index}.wav')
+        avatar_video_rel = os.path.join('Course_Render', f'page-{index}-avatar')
+        avatar_mp4 = os.path.join(path, avatar_video_rel + '.mp4')
+        page_video = os.path.join(render_dir, f'page-{index}.mp4')
+        if progress_callback:
+            progress_callback('tts', 15 + int((index - 1) * 35 / len(scenes)))
+        tts.Perform_Inference(
+            ref_wav_path=ref_wav_path,
+            prompt_text='我制作了一站式的整合包，从训练到推理都可以零门槛上手使用',
+            prompt_languageself=tts.i18n('中文'),
+            target_text=script,
+            target_text_language=tts.i18n('中文'),
+            cut=tts.i18n('凑50字一切'),
+            output_path=audio_path,
+        )
+        if not os.path.exists(audio_path):
+            raise RuntimeError(f'第 {index} 页 GPT-SoVITS 未生成音频')
+        if progress_callback:
+            progress_callback('avatar', 50 + int((index - 1) * 30 / len(scenes)))
+        sad.Perform_Inference(avatar_path, audio_path, os.path.join(path, avatar_video_rel))
+        if not os.path.exists(avatar_mp4):
+            raise RuntimeError(f'第 {index} 页 SadTalker 未生成视频')
+        ffmpeg_cmd = [
+            'ffmpeg', '-y', '-loglevel', 'error', '-loop', '1', '-i', image_path, '-i', avatar_mp4,
+            '-filter_complex', '[0:v]scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2[bg];[1:v]scale=360:-1[avatar];[bg][avatar]overlay=W-w-32:H-h-32:shortest=1[v]',
+            '-map', '[v]', '-map', '1:a:0', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-shortest', page_video,
+        ]
+        subprocess.run(ffmpeg_cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        duration = float(subprocess.check_output(['ffprobe', '-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', page_video]))
+        page_videos.append(page_video)
+        page_durations.append(duration)
 
-    ffmpeg_cmd = [
-        'ffmpeg', '-y', '-loglevel', 'error', '-loop', '1', '-i', image_path, '-i', avatar_mp4,
-        '-filter_complex', '[0:v]scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2[bg];[1:v]scale=360:-1[avatar];[bg][avatar]overlay=W-w-32:H-h-32:shortest=1[v]',
-        '-map', '[v]', '-map', '1:a:0', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-shortest', final_video,
-    ]
-    subprocess.run(ffmpeg_cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    if progress_callback:
+        progress_callback('merge', 90)
+    concat_list = os.path.join(render_dir, 'concat.txt')
+    with open(concat_list, 'w', encoding='utf-8') as concat_file:
+        for page_video in page_videos:
+            concat_file.write("file '" + page_video.replace("'", "'\\''") + "'\n")
+    subprocess.run(['ffmpeg', '-y', '-loglevel', 'error', '-f', 'concat', '-safe', '0', '-i', concat_list, '-c', 'copy', final_video], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     if not os.path.exists(final_video):
         raise RuntimeError('FFmpeg 未生成最终视频')
     vtt_path = os.path.join(path, 'course.vtt')
-    subprocess.run(['ffprobe', '-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', final_video], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    elapsed = 0.0
     with open(vtt_path, 'w', encoding='utf-8') as vtt:
-        vtt.write('WEBVTT\n\n00:00:00.000 --> 99:59:59.000\n' + script + '\n')
+        vtt.write('WEBVTT\n\n')
+        for index, (scene, duration) in enumerate(zip(scenes, page_durations), 1):
+            script = (scene.get('Script') or scene.get('Text') or '').strip()
+            start = time.strftime('%H:%M:%S', time.gmtime(elapsed)) + f'.{int((elapsed % 1) * 1000):03d}'
+            elapsed += duration
+            end = time.strftime('%H:%M:%S', time.gmtime(elapsed)) + f'.{int((elapsed % 1) * 1000):03d}'
+            vtt.write(f'{index}\n{start} --> {end}\n{script}\n\n')
 
 def _course_render_task(path, task_id):
     try:
@@ -159,7 +184,7 @@ def _course_render_task(path, task_id):
         _write_course_state(path, stage='tts', progress=20)
         with course_gpu_lock:
             _write_course_state(path, stage='gpu_inference', progress=35)
-            _course_render_pipeline(path, scenes)
+            _course_render_pipeline(path, scenes, lambda stage, progress: _write_course_state(path, stage=stage, progress=progress))
         _write_course_state(path, task_id=task_id, status='success', stage='complete', progress=100, error=None)
     except Exception as exc:
         _write_course_state(path, task_id=task_id, status='failed', stage='failed', progress=100, error=str(exc))
