@@ -29,9 +29,21 @@ executor = concurrent.futures.ThreadPoolExecutor(max_workers=5)
 app = Flask(__name__)
 CORS(app)  # 允许跨域请求
 
-def _course_dir(user):
+def _course_root(user):
     _, _, _, path = Create_File(str(user))
+    return os.path.join(path, 'Courses')
+
+def _course_dir(user, course_id):
+    if not course_id or not re.fullmatch(r'[0-9A-Za-z_-]{8,64}', str(course_id)):
+        raise ValueError('缺少或非法的 Course_Id')
+    root = _course_root(user)
+    path = os.path.join(root, str(course_id))
+    os.makedirs(path, exist_ok=True)
     return path
+
+def _course_params(payload):
+    payload = payload or {}
+    return str(payload.get('User', 'Test')), payload.get('Course_Id') or payload.get('course_id')
 
 def _safe_name(name):
     return re.sub(r'[^0-9A-Za-z._-]', '_', name or 'course')
@@ -83,18 +95,22 @@ def Course_Upload():
     uploaded = request.files.get('File')
     if not uploaded or not uploaded.filename.lower().endswith(('.ppt', '.pptx', '.pdf')):
         return jsonify(result='Failed', message='请上传 PPT、PPTX 或 PDF'), 400
-    path = _course_dir(user)
+    course_id = uuid.uuid4().hex[:12]
+    path = _course_dir(user, course_id)
     filename = _safe_name(uploaded.filename)
     source = os.path.join(path, 'Course_Source' + os.path.splitext(filename)[1].lower())
     uploaded.save(source)
-    course_id = uuid.uuid4().hex[:12]
     with open(os.path.join(path, 'Course_Meta.json'), 'w', encoding='utf-8') as f:
         json.dump({'Course_Id': course_id, 'User': str(user), 'Name': request.form.get('Course_Name', filename), 'Source': source}, f, ensure_ascii=False)
     return jsonify(result='Success', course_id=course_id)
 
 @app.route('/Course_Parse', methods=['POST'])
 def Course_Parse():
-    data = request.get_json() or {}; path = _course_dir(data.get('User', 'Test'))
+    data = request.get_json() or {}; user, course_id = _course_params(data)
+    try:
+        path = _course_dir(user, course_id)
+    except ValueError as exc:
+        return jsonify(result='Failed', message=str(exc)), 400
     meta_path = os.path.join(path, 'Course_Meta.json')
     if not os.path.exists(meta_path): return jsonify(result='Failed', message='请先上传课件'), 400
     meta = json.load(open(meta_path, encoding='utf-8'))
@@ -109,8 +125,13 @@ def Course_Parse():
 
 @app.route('/Course_Scenes', methods=['GET', 'PUT'])
 def Course_Scenes():
-    user = (request.args.get('User') if request.method == 'GET' else (request.get_json() or {}).get('User', 'Test'))
-    path = _course_dir(user); scenes_path = os.path.join(path, 'Course_Scenes.json')
+    payload = request.args if request.method == 'GET' else (request.get_json() or {})
+    user, course_id = _course_params(payload)
+    try:
+        path = _course_dir(user, course_id)
+    except ValueError as exc:
+        return jsonify(result='Failed', message=str(exc)), 400
+    scenes_path = os.path.join(path, 'Course_Scenes.json')
     if request.method == 'PUT':
         scenes = (request.get_json() or {}).get('Scenes', [])
         with open(scenes_path, 'w', encoding='utf-8') as f: json.dump(scenes, f, ensure_ascii=False, indent=2)
@@ -120,20 +141,34 @@ def Course_Scenes():
 
 @app.route('/Course_Render', methods=['POST'])
 def Course_Render():
-    data = request.get_json() or {}; path = _course_dir(data.get('User', 'Test'))
+    data = request.get_json() or {}; user, course_id = _course_params(data)
+    try:
+        path = _course_dir(user, course_id)
+    except ValueError as exc:
+        return jsonify(result='Failed', message=str(exc)), 400
     if not os.path.exists(os.path.join(path, 'Course_Scenes.json')): return jsonify(result='Failed', message='请先解析并保存讲稿'), 400
     Task_State(path, 'Course_Render', False)
     return jsonify(result='Course_Render', message='课程生成任务已创建')
 
 @app.route('/Course_State', methods=['POST'])
 def Course_State():
-    data = request.get_json() or {}; path = _course_dir(data.get('User', 'Test')); task = data.get('Task', 'Course_Render')
-    try: return jsonify(result=Task_State(path, task))
-    except Exception: return jsonify(result=False)
+    data = request.get_json() or {}; user, course_id = _course_params(data); task = data.get('Task', 'Course_Render')
+    try:
+        path = _course_dir(user, course_id)
+        return jsonify(result=Task_State(path, task))
+    except ValueError as exc:
+        return jsonify(result='Failed', message=str(exc)), 400
+    except Exception:
+        return jsonify(result=False)
 
 @app.route('/Course_Download', methods=['GET'])
 def Course_Download():
-    path = _course_dir(request.args.get('User', 'Test')); kind = request.args.get('type', 'mp4').lower()
+    user, course_id = _course_params(request.args)
+    try:
+        path = _course_dir(user, course_id)
+    except ValueError as exc:
+        return jsonify(result='Failed', message=str(exc)), 400
+    kind = request.args.get('type', 'mp4').lower()
     filename = 'last_video.mp4' if kind == 'mp4' else ('Course_Scenes.json' if kind == 'json' else 'course.vtt')
     target = os.path.join(path, filename)
     if not os.path.exists(target): return jsonify(result='Failed', message='文件尚未生成'), 404
