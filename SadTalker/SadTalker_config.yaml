@@ -4,8 +4,9 @@ ref_pose: null
 checkpoint_dir: 'SadTalker/checkpoints'
 result_dir: 'SadTalker/results'
 pose_style: 0
-batch_size: 2
-size: 256
+# Balanced course-rendering profile for a 12 GB GPU.
+batch_size: 4
+size: 192
 expression_scale: 1.0
 input_yaw: null
 input_pitch: null
