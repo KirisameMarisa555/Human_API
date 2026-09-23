@@ -15,6 +15,7 @@ import subprocess
 import uuid
 import zipfile
 import xml.etree.ElementTree as ET
+import threading
 from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
 
@@ -25,6 +26,7 @@ import concurrent.futures
 
 # 创建线程池
 executor = concurrent.futures.ThreadPoolExecutor(max_workers=5)
+course_task_lock = threading.Lock()
 
 app = Flask(__name__)
 CORS(app)  # 允许跨域请求
@@ -48,6 +50,46 @@ def _course_dir(user, course_id):
 def _course_params(payload):
     payload = payload or {}
     return str(payload.get('User', 'Test')), payload.get('Course_Id') or payload.get('course_id')
+
+def _course_state_path(path):
+    return os.path.join(path, 'Course_Task_State.json')
+
+def _read_course_state(path):
+    state_path = _course_state_path(path)
+    if not os.path.exists(state_path):
+        return None
+    try:
+        with open(state_path, encoding='utf-8') as state_file:
+            return json.load(state_file)
+    except (OSError, json.JSONDecodeError):
+        return None
+
+def _write_course_state(path, **updates):
+    os.makedirs(path, exist_ok=True)
+    with course_task_lock:
+        state = _read_course_state(path) or {}
+        state.update(updates)
+        temp_path = _course_state_path(path) + '.tmp'
+        with open(temp_path, 'w', encoding='utf-8') as state_file:
+            json.dump(state, state_file, ensure_ascii=False, indent=2)
+        os.replace(temp_path, _course_state_path(path))
+    return state
+
+def _course_render_task(path, task_id):
+    try:
+        _write_course_state(path, task_id=task_id, status='running', stage='validate', progress=5, error=None)
+        scenes_path = os.path.join(path, 'Course_Scenes.json')
+        if not os.path.exists(scenes_path):
+            raise RuntimeError('请先解析并保存讲稿')
+        with open(scenes_path, encoding='utf-8') as scenes_file:
+            scenes = json.load(scenes_file)
+        if not scenes:
+            raise RuntimeError('课程没有可生成的场景')
+        _write_course_state(path, stage='queued_for_gpu', progress=10)
+        # GPU 推理和 FFmpeg 编排接入这里；在管线完成前明确返回失败，避免假装成功。
+        raise RuntimeError('课程渲染管线尚未接入 GPT-SoVITS、SadTalker 和 FFmpeg')
+    except Exception as exc:
+        _write_course_state(path, task_id=task_id, status='failed', stage='failed', progress=100, error=str(exc))
 
 def _safe_name(name):
     return re.sub(r'[^0-9A-Za-z._-]', '_', name or 'course')
@@ -153,14 +195,22 @@ def Course_Render():
     except ValueError as exc:
         return jsonify(result='Failed', message=str(exc)), 400
     if not os.path.exists(os.path.join(path, 'Course_Scenes.json')): return jsonify(result='Failed', message='请先解析并保存讲稿'), 400
-    Task_State(path, 'Course_Render', False)
-    return jsonify(result='Course_Render', message='课程生成任务已创建')
+    current = _read_course_state(path)
+    if current and current.get('status') in {'queued', 'running'}:
+        return jsonify(result='Course_Render', task_id=current.get('task_id'), state=current, message='课程生成任务已在处理中'), 202
+    task_id = uuid.uuid4().hex[:16]
+    state = _write_course_state(path, task_id=task_id, status='queued', stage='queued', progress=0, error=None)
+    executor.submit(_course_render_task, path, task_id)
+    return jsonify(result='Course_Render', task_id=task_id, state=state, message='课程生成任务已创建'), 202
 
 @app.route('/Course_State', methods=['POST'])
 def Course_State():
     data = request.get_json() or {}; user, course_id = _course_params(data); task = data.get('Task', 'Course_Render')
     try:
         path = _course_dir(user, course_id)
+        state = _read_course_state(path)
+        if task == 'Course_Render':
+            return jsonify(result=state or {'status': 'idle', 'stage': 'idle', 'progress': 0})
         return jsonify(result=Task_State(path, task))
     except ValueError as exc:
         return jsonify(result='Failed', message=str(exc)), 400
