@@ -39,6 +39,10 @@ def _course_dir(user, course_id):
     root = _course_root(user)
     path = os.path.join(root, str(course_id))
     os.makedirs(path, exist_ok=True)
+    state_path = os.path.join(path, 'State.json')
+    if not os.path.exists(state_path):
+        with open(state_path, 'w', encoding='utf-8') as state_file:
+            json.dump({}, state_file)
     return path
 
 def _course_params(payload):
@@ -80,6 +84,8 @@ def _parse_course_file(source, output_dir):
         subprocess.run([pdftotext, '-layout', pdf, txt], check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         if os.path.exists(txt):
             text = [line.strip() for line in open(txt, encoding='utf-8', errors='ignore').read().split('\f')]
+            while text and not text[-1]:
+                text.pop()
     if not text and ext == '.pptx':
         text = _pptx_text(source)
     pdftoppm = shutil.which('pdftoppm')
